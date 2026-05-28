@@ -1,0 +1,39 @@
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+
+load_dotenv()
+
+
+@dataclass(frozen=True)
+class Settings:
+    postgres_host: str = os.getenv("POSTGRES_HOST")
+    postgres_port: int = int(os.getenv("POSTGRES_PORT"))
+    postgres_db: str = os.getenv("POSTGRES_DB")
+    postgres_user: str = os.getenv("POSTGRES_USER", "")
+    postgres_password: str = os.getenv("POSTGRES_PASSWORD", "")
+    postgres_schema: str = os.getenv("POSTGRES_SCHEMA")
+    source_table: str = os.getenv("POSTGRES_SOURCE_TABLE")
+    source_text_column: str = os.getenv("POSTGRES_SOURCE_TEXT_COLUMN")
+
+    ollama_base_url: str = os.getenv("OLLAMA_BASE_URL")
+    ollama_model: str = os.getenv("OLLAMA_MODEL")
+    ollama_timeout: float = float(os.getenv("OLLAMA_TIMEOUT", "120"))
+
+    graph_name: str = os.getenv("AGE_GRAPH_NAME", "llamaindex_graph")
+    vector_table: str = os.getenv("PGVECTOR_TABLE", "kg_chunks")
+    vector_dim: int = int(os.getenv("PGVECTOR_DIM", "1536"))
+
+    chunk_limit: int = int(os.getenv("CHUNK_LIMIT", "100"))
+
+
+settings = Settings()
+
+
+def project_root() -> Path:
+    return Path(__file__).resolve().parent.parent
