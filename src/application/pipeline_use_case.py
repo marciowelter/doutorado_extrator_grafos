@@ -23,15 +23,23 @@ class PipelineUseCase:
     def bootstrap(self) -> None:
         self._age_repo.ensure_graph()
 
+    def reconnect(self) -> None:
+        self._conn = get_postgres_connection()
+        self._age_repo = AgeRepository(self._conn)
+        self._age_repo.ensure_graph()
+
     def _refresh_connection_if_needed(self) -> None:
         try:
             self._conn.execute("SELECT 1")
         except Exception:
-            self._conn = get_postgres_connection()
-            self._age_repo._conn = self._conn  # type: ignore[attr-defined]
+            self.reconnect()
 
     def process_text(self, text: str) -> KnowledgeGraphExtraction:
         extraction = self._extractor.extract(text)
         self._refresh_connection_if_needed()
         self._age_repo.save_extraction(extraction)
         return extraction
+
+    def normalize_and_unify_graph(self) -> dict[str, int]:
+        self._refresh_connection_if_needed()
+        return self._age_repo.normalize_and_unify_graph_entities()

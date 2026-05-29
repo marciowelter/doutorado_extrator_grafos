@@ -12,6 +12,12 @@ from pydantic import BaseModel, Field
 
 from config.settings import settings
 from src.domain.models import Entity, KnowledgeGraphExtraction, Relationship
+from src.domain.normalization import (
+    normalize_for_match,
+    normalize_graph_category,
+    normalize_graph_name,
+    normalize_relation_label,
+)
 from src.domain.repositories import KnowledgeExtractor
 
 
@@ -136,11 +142,7 @@ def get_last_extraction_debug() -> dict[str, Any]:
 
 
 def _normalize_for_match(value: str) -> str:
-    normalized = unicodedata.normalize("NFKD", value)
-    without_accents = "".join(char for char in normalized if not unicodedata.combining(char))
-    lowered = without_accents.lower().replace("_", " ")
-    lowered = re.sub(r"\s+", " ", lowered)
-    return lowered.strip()
+    return normalize_for_match(value)
 
 
 def _source_contains_candidate(source_text: str, candidate: str) -> bool:
@@ -190,16 +192,7 @@ def _resolve_entity_name(raw_name: str, entity_name_map: dict[str, str]) -> str 
 
 
 def _sanitize_relation_label(value: str) -> str:
-    cleaned = re.sub(r"[^A-Za-zÀ-ÿ_ ]", " ", value).strip()
-    if not cleaned:
-        return "RELACIONA"
-
-    token = cleaned.split()[0]
-    normalized = _normalize_for_match(token)
-    if not normalized:
-        return "RELACIONA"
-
-    return normalized.replace(" ", "_").upper()
+    return normalize_relation_label(value)
 
 
 def _parse_structured_relationship_item(
@@ -280,10 +273,14 @@ class LlamaIndexKnowledgeExtractor(KnowledgeExtractor):
 
         themes_by_name: dict[str, Entity] = {}
         for item in structured.temas:
-            name = item.nome.strip()
-            if not name:
+            raw_name = item.nome.strip()
+            if not raw_name:
                 continue
-            if not _source_contains_candidate(text, name):
+            if not _source_contains_candidate(text, raw_name):
+                continue
+
+            name = normalize_graph_name(raw_name)
+            if not name:
                 continue
 
             themes_by_name[name] = Entity(
@@ -310,15 +307,19 @@ class LlamaIndexKnowledgeExtractor(KnowledgeExtractor):
 
         entities_by_name: dict[str, Entity] = {}
         for item in structured.entidades:
-            name = item.nome.strip()
-            if not name:
+            raw_name = item.nome.strip()
+            if not raw_name:
                 continue
-            if not _source_contains_candidate(text, name):
+            if not _source_contains_candidate(text, raw_name):
                 continue
 
-            category = item.categoria.strip()
+            category = normalize_graph_category(item.categoria.strip())
             if _label_from_category(category) == "TEMA":
                 # Temas sao tratados em etapa dedicada para manter separacao semantica.
+                continue
+
+            name = normalize_graph_name(raw_name)
+            if not name:
                 continue
 
             candidate = Entity(

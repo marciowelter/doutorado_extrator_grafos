@@ -4,9 +4,16 @@ import json
 import time
 import traceback
 from datetime import datetime, timezone
+from typing import Callable
 
 import streamlit as st
 
+from src.application.import_texts_use_case import (
+    IMPORT_SQL,
+    ImportProgress,
+    ImportTextsUseCase,
+    RetryEvent,
+)
 from src.application.pipeline_use_case import PipelineUseCase
 from src.application.search_use_case import SearchUseCase
 from src.infrastructure.llm.llamaindex_client import get_last_extraction_debug
@@ -14,6 +21,7 @@ from src.infrastructure.llm.llamaindex_client import get_last_extraction_debug
 
 RECOMMENDED_MAX_CHARS = 3000
 HARD_WARN_CHARS = 7000
+IMPORT_JOB_NAME = "Importacao Textos"
 
 
 def init_session_state() -> None:
@@ -28,6 +36,9 @@ def init_session_state() -> None:
 
     if "last_tech_log" not in st.session_state:
         st.session_state.last_tech_log = None
+
+    if "last_import_summary" not in st.session_state:
+        st.session_state.last_import_summary = None
 
 
 @st.cache_resource(show_spinner=False)
@@ -50,6 +61,14 @@ def process_text_sync(text: str) -> dict:
 
 def search_sync(keyword: str) -> dict[str, list[dict[str, str]]]:
     return get_search().search(keyword)
+
+
+def import_texts_sync(
+    on_progress: Callable[[ImportProgress], None] | None = None,
+    on_retry: Callable[[RetryEvent], None] | None = None,
+) -> dict[str, int]:
+    use_case = ImportTextsUseCase()
+    return use_case.process_all(on_progress=on_progress, on_retry=on_retry)
 
 
 def log_exec(status: str, job: str, started: float, meta: dict, error: str | None = None) -> None:
@@ -111,6 +130,65 @@ def handle_extraction_submit(text: str, char_count: int) -> None:
             str(exc),
         )
         st.error(f"Falha no processamento: {exc}")
+
+
+def handle_import_submit() -> None:
+    started = time.time()
+    status_box = st.status("Iniciando importacao de textos...", expanded=True)
+    progress_bar = st.progress(0)
+    progress_text = st.empty()
+
+    try:
+        status_box.write("Conectando ao banco e carregando pendencias")
+
+        def on_retry(event: RetryEvent) -> None:
+            status_box.write(
+                (
+                    "Instabilidade de conexao detectada em "
+                    f"{event.context}. Tentativa {event.attempt}/{event.max_attempts}; "
+                    "reconectando em 2 segundos."
+                )
+            )
+
+        def on_progress(event: ImportProgress) -> None:
+            percentage = int((event.attempted / event.total) * 100) if event.total else 100
+            progress_bar.progress(percentage)
+            progress_text.caption(
+                (
+                    f"Processados: {event.attempted}/{event.total} | "
+                    f"Sucesso: {event.successful} | Falha: {event.failed} | "
+                    f"Trecho atual: {event.record.trecho_id}"
+                )
+            )
+            status_box.write(
+                (
+                    f"Trecho {event.record.trecho_id} do discurso {event.record.discurso_id} "
+                    "processado."
+                )
+            )
+
+        summary = import_texts_sync(on_progress=on_progress, on_retry=on_retry)
+        progress_bar.progress(100)
+        progress_text.caption(
+            (
+                f"Finalizado. Processados: {summary['attempted']}/{summary['total']} | "
+                f"Sucesso: {summary['successful']} | Falha: {summary['failed']}"
+            )
+        )
+        status_box.update(label="Importacao concluida", state="complete")
+        st.session_state.last_import_summary = summary
+        log_exec("ok", IMPORT_JOB_NAME, started, summary)
+    except Exception as exc:
+        status_box.update(label="Falha na importacao", state="error")
+        st.session_state.last_import_summary = {
+            "total": 0,
+            "attempted": 0,
+            "successful": 0,
+            "failed": 1,
+            "error": str(exc),
+        }
+        log_exec("error", IMPORT_JOB_NAME, started, {}, str(exc))
+        st.error(f"Falha na importacao: {exc}")
 
 
 def render_experiments_tab() -> None:
@@ -175,6 +253,23 @@ def render_search_tab() -> None:
     render_search_results(st.session_state.last_search_results)
 
 
+def render_import_tab() -> None:
+    st.subheader("Importacao de textos do Postgres")
+    st.caption(
+        "Carrega textos pendentes do banco 'banco' (schema 'doutorado'), processa no grafo e marca trecho.grafo=true."
+    )
+
+    with st.expander("SQL de importacao", expanded=False):
+        st.code(IMPORT_SQL, language="sql")
+
+    if st.button("Importar Textos e Processar Grafo", type="primary"):
+        handle_import_submit()
+
+    if st.session_state.last_import_summary is not None:
+        st.markdown("### Ultimo resultado de importacao")
+        st.json(st.session_state.last_import_summary)
+
+
 def render_search_results(results: dict[str, list[dict[str, str]]] | None) -> None:
     if results is None:
         st.info("Nenhum dado carregado ainda. Informe uma palavra-chave e clique em Buscar.")
@@ -201,11 +296,13 @@ def render_tech_log() -> None:
 
 
 def render_app() -> None:
-    tab_exp, tab_search = st.tabs(["Experimentos", "Busca Grafo"])
+    tab_exp, tab_search, tab_import = st.tabs(["Experimentos", "Busca Grafo", "Importacao Textos"])
     with tab_exp:
         render_experiments_tab()
     with tab_search:
         render_search_tab()
+    with tab_import:
+        render_import_tab()
     render_tech_log()
 
 

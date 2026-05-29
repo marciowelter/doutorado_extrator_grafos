@@ -26,6 +26,10 @@ class GraphRepository(ABC):
     def search_graph(self, keyword: str, limit: int = 20) -> list[GraphSearchResult]:
         raise NotImplementedError
 
+    @abstractmethod
+    def normalize_and_unify_graph_entities(self) -> dict[str, int]:
+        raise NotImplementedError
+
 
 class KnowledgeExtractor(ABC):
     @abstractmethod
