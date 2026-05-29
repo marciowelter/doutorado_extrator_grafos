@@ -149,7 +149,7 @@ def render_experiments_tab() -> None:
 
 
 def render_search_tab() -> None:
-    st.subheader("Busca vetorial + grafo")
+    st.subheader("Busca no grafo")
     with st.form("search_form", clear_on_submit=False):
         keyword = st.text_input("Palavra-chave", key="search_keyword")
         submitted_search = st.form_submit_button("Buscar", type="secondary")
@@ -161,9 +161,9 @@ def render_search_tab() -> None:
             started = time.time()
             status_box = st.status("Executando busca...", expanded=True)
             try:
-                status_box.write("1/2 Consultando indice vetorial")
+                status_box.write("1/2 Consultando conexoes no grafo")
                 results = search_sync(keyword)
-                status_box.write("2/2 Carregando conexoes de grafo")
+                status_box.write("2/2 Filtrando relacoes de tema/assunto")
                 status_box.update(label="Busca concluida", state="complete")
                 st.session_state.last_search_results = results
                 log_exec("ok", "Busca", started, {"keyword": keyword})
@@ -179,13 +179,6 @@ def render_search_results(results: dict[str, list[dict[str, str]]] | None) -> No
     if results is None:
         st.info("Nenhum dado carregado ainda. Informe uma palavra-chave e clique em Buscar.")
         return
-
-    st.markdown("### Trechos correlacionados (pgvector)")
-    if not results["vector"]:
-        st.info("Nenhum trecho encontrado.")
-    else:
-        for item in results["vector"]:
-            st.write(item["content"])
 
     st.markdown("### Conexoes no grafo (Apache AGE)")
     if not results["graph"]:
@@ -208,7 +201,7 @@ def render_tech_log() -> None:
 
 
 def render_app() -> None:
-    tab_exp, tab_search = st.tabs(["Experimentos", "Busca Hibrida"])
+    tab_exp, tab_search = st.tabs(["Experimentos", "Busca Grafo"])
     with tab_exp:
         render_experiments_tab()
     with tab_search:

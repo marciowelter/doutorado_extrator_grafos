@@ -7,7 +7,6 @@ from typing import Any
 
 from llama_index.core import Settings
 from llama_index.core.prompts import PromptTemplate
-from llama_index.embeddings.ollama import OllamaEmbedding
 from llama_index.llms.ollama import Ollama
 from pydantic import BaseModel, Field
 
@@ -262,13 +261,7 @@ def configure_llamaindex() -> None:
         temperature=0,
     )
 
-    embed_model = OllamaEmbedding(
-        model_name=settings.ollama_model,
-        base_url=settings.ollama_base_url,
-    )
-
     Settings.llm = llm
-    Settings.embed_model = embed_model
 
 
 class LlamaIndexKnowledgeExtractor(KnowledgeExtractor):
