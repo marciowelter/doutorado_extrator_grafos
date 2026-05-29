@@ -7,7 +7,7 @@ from src.application.pipeline_use_case import PipelineUseCase
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="LlamaIndex KG pipeline")
+    parser = argparse.ArgumentParser(description="Doutorado Extrator Grafos pipeline")
     parser.add_argument("--limit", type=int, default=None, help="Chunk processing limit")
     parser.add_argument(
         "--text",

@@ -25,7 +25,7 @@ class Settings:
     ollama_model: str = os.getenv("OLLAMA_MODEL")
     ollama_timeout: float = float(os.getenv("OLLAMA_TIMEOUT", "120"))
 
-    graph_name: str = os.getenv("AGE_GRAPH_NAME", "llamaindex_graph")
+    graph_name: str = os.getenv("AGE_GRAPH_NAME", "doutorado_extrator_grafos_graph")
     vector_table: str = os.getenv("PGVECTOR_TABLE", "kg_chunks")
     vector_dim: int = int(os.getenv("PGVECTOR_DIM", "1536"))
 

@@ -217,8 +217,8 @@ def render_app() -> None:
 
 
 def run() -> None:
-    st.set_page_config(page_title="llamaindex KG", layout="wide")
-    st.title("LlamaIndex Knowledge Graph Lab")
+    st.set_page_config(page_title="Doutorado Extrator Grafos", layout="wide")
+    st.title("Doutorado Extrator Grafos - Knowledge Graph Lab")
     st.caption("A tela inicial nao carrega dados automaticamente. Use os botoes para processar ou buscar.")
     init_session_state()
 
