@@ -22,6 +22,12 @@ class Settings:
     ollama_base_url: str = os.getenv("OLLAMA_BASE_URL")
     ollama_model: str = os.getenv("OLLAMA_MODEL")
     ollama_timeout: float = float(os.getenv("OLLAMA_TIMEOUT", "120"))
+    gliner_model: str = os.getenv("GLINER_MODEL", "urchade/gliner_multi-v2.1")
+    gliner_threshold: float = float(os.getenv("GLINER_THRESHOLD", "0.45"))
+    gliner_labels: str = os.getenv(
+        "GLINER_LABELS",
+        "pessoa,organizacao,local,data,evento,valor,documento,instituicao,cargo",
+    )
 
     graph_name: str = os.getenv("AGE_GRAPH_NAME", "doutorado_extrator_grafos_graph")
 

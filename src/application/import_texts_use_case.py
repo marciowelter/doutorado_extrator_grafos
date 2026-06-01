@@ -6,6 +6,7 @@ from typing import Callable, TypeVar
 
 import psycopg
 
+from src.domain.models import KnowledgeGraphExtraction
 from src.application.pipeline_use_case import PipelineUseCase
 from src.infrastructure.database.connection import get_postgres_connection
 
@@ -104,22 +105,39 @@ class ImportTextsUseCase:
         attempted = 0
         successful = 0
         failed = 0
+        extraction_cache: dict[int, KnowledgeGraphExtraction] = {}
 
         for record in records:
             attempted += 1
             try:
-                self._run_with_retry(
-                    lambda current_record=record: self._pipeline.process_text(current_record.texto),
+                additional_themes = self._run_with_retry(
+                    lambda current_record=record: self.fetch_datamart_oque_themes(current_record.discurso_id),
                     on_retry=on_retry,
-                    context=f"processamento do trecho_id={record.trecho_id}",
+                    context=f"consulta de temas datamart_oque para discurso_id={record.discurso_id}",
+                )
+
+                extraction_cache[record.trecho_id] = self._pipeline.extract_text(
+                    record.texto,
+                    additional_themes=additional_themes,
+                )
+
+                self._run_with_retry(
+                    lambda current_record=record: self._pipeline.save_extraction(
+                        extraction_cache[current_record.trecho_id],
+                    ),
+                    on_retry=on_retry,
+                    context=f"persistencia do trecho_id={record.trecho_id}",
                 )
                 self._run_with_retry(
                     lambda current_record=record: self.mark_record_processed(current_record.trecho_id),
                     on_retry=on_retry,
                     context=f"atualizacao de status do trecho_id={record.trecho_id}",
                 )
+
+                extraction_cache.pop(record.trecho_id, None)
                 successful += 1
             except Exception:
+                extraction_cache.pop(record.trecho_id, None)
                 failed += 1
 
             if on_progress is not None:
@@ -165,6 +183,25 @@ class ImportTextsUseCase:
         update_sql = "UPDATE doutorado.datamart_trecho SET grafo = TRUE WHERE id = %s"
         with self._conn.cursor() as cursor:
             cursor.execute(update_sql, (trecho_id,))
+
+    def fetch_datamart_oque_themes(self, discurso_id: int) -> list[str]:
+        query = (
+            "SELECT tema "
+            "FROM doutorado.datamart_oque "
+            "WHERE discurso_id = %s AND coalesce(trim(tema), '') <> ''"
+        )
+        with self._conn.cursor() as cursor:
+            cursor.execute(query, (discurso_id,))
+            rows = cursor.fetchall()
+
+        themes_by_name: dict[str, None] = {}
+        for (raw_theme,) in rows:
+            normalized = str(raw_theme).strip().upper()
+            if not normalized:
+                continue
+            themes_by_name[normalized] = None
+
+        return list(themes_by_name.keys())
 
     def _run_with_retry(
         self,

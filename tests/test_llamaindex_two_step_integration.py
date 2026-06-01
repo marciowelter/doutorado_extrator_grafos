@@ -29,13 +29,20 @@ class TestLlamaIndexTwoStepIntegration(unittest.TestCase):
             "Esperava encontrar entidade com Marquito (ex.: Dep. Marquito).",
         )
 
-        # A segunda etapa de relacoes pode variar por modelo, mas deve retornar lista valida.
-        for rel in extraction.relationships:
-            self.assertTrue(rel.source)
-            self.assertTrue(rel.target)
-            self.assertTrue(rel.relation)
+        extracted_entities = {entity.name for entity in extraction.entities if entity.label == "ENTIDADE"}
+        extracted_themes = {entity.name for entity in extraction.entities if entity.label == "TEMA"}
 
-        print("\n=== Resultado estruturado da extração (duas etapas) ===")
+        # As relacoes sao deterministicas: ENTIDADE -> TEMA com tipo RELACIONA.
+        for rel in extraction.relationships:
+            self.assertIn(rel.source, extracted_entities)
+            self.assertIn(rel.target, extracted_themes)
+            self.assertEqual(rel.relation, "RELACIONA")
+
+        if extracted_entities and extracted_themes:
+            expected_relationship_count = len(extracted_entities) * len(extracted_themes)
+            self.assertEqual(len(extraction.relationships), expected_relationship_count)
+
+        print("\n=== Resultado estruturado da extração (GLiNER + Ollama Temas) ===")
         print(json.dumps(extraction.model_dump(), ensure_ascii=False, indent=2))
 
 

@@ -33,5 +33,9 @@ class GraphRepository(ABC):
 
 class KnowledgeExtractor(ABC):
     @abstractmethod
-    def extract(self, text: str) -> KnowledgeGraphExtraction:
+    def extract(
+        self,
+        text: str,
+        additional_themes: list[str] | None = None,
+    ) -> KnowledgeGraphExtraction:
         raise NotImplementedError

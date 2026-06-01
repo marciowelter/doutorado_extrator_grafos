@@ -14,7 +14,7 @@ from src.application.import_texts_use_case import (
     ImportTextsUseCase,
     RetryEvent,
 )
-from src.application.pipeline_use_case import PipelineUseCase
+from src.application.pipeline_use_case import PipelineUseCase, get_last_pipeline_timing
 from src.application.search_use_case import SearchUseCase
 from src.infrastructure.llm.llamaindex_client import get_last_extraction_debug
 
@@ -111,6 +111,7 @@ def handle_extraction_submit(text: str, char_count: int) -> None:
             {
                 "chars": char_count,
                 "llm_debug": get_last_extraction_debug(),
+                "pipeline_timing": get_last_pipeline_timing(),
             },
         )
     except Exception as exc:
@@ -126,6 +127,7 @@ def handle_extraction_submit(text: str, char_count: int) -> None:
             {
                 "chars": char_count,
                 "llm_debug": get_last_extraction_debug(),
+                "pipeline_timing": get_last_pipeline_timing(),
             },
             str(exc),
         )
