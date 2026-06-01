@@ -30,8 +30,7 @@ join doutorado.datamart_como como on como.id = discurso.como_id
 join doutorado.datamart_onde onde on onde.id = discurso.onde_id
 join doutorado.datamart_porque porque on porque.id = discurso.porque_id
 where
-  (discurso.ata_alesc_id is not null or discurso.ata_id is not null)
-  and length(trecho.texto) > 1000
+      length(trecho.texto) > 1000
   and trecho.grafo is false
 order by
   discurso.id,
@@ -56,6 +55,10 @@ class ImportProgress:
     successful: int
     failed: int
     record: ImportTextRecord
+    record_duration_seconds: float
+    average_duration_seconds: float
+    estimated_remaining_seconds: float
+    estimated_completion_seconds: float
 
 
 @dataclass(frozen=True)
@@ -86,7 +89,8 @@ class ImportTextsUseCase:
         self,
         on_progress: ProgressCallback | None = None,
         on_retry: RetryCallback | None = None,
-    ) -> dict[str, int]:
+    ) -> dict[str, int | float]:
+        started_at = time.perf_counter()
         total = self._run_with_retry(
             self.count_pending_records,
             on_retry=on_retry,
@@ -94,7 +98,16 @@ class ImportTextsUseCase:
         )
 
         if total == 0:
-            return {"total": 0, "attempted": 0, "successful": 0, "failed": 0}
+            return {
+                "total": 0,
+                "attempted": 0,
+                "successful": 0,
+                "failed": 0,
+                "elapsed_seconds": 0.0,
+                "average_record_seconds": 0.0,
+                "estimated_remaining_seconds": 0.0,
+                "estimated_completion_seconds": 0.0,
+            }
 
         records = self._run_with_retry(
             self.fetch_pending_records,
@@ -106,8 +119,10 @@ class ImportTextsUseCase:
         successful = 0
         failed = 0
         extraction_cache: dict[int, KnowledgeGraphExtraction] = {}
+        accumulated_record_seconds = 0.0
 
         for record in records:
+            record_started_at = time.perf_counter()
             attempted += 1
             try:
                 additional_themes = self._run_with_retry(
@@ -140,6 +155,12 @@ class ImportTextsUseCase:
                 extraction_cache.pop(record.trecho_id, None)
                 failed += 1
 
+            record_duration_seconds = round(time.perf_counter() - record_started_at, 4)
+            accumulated_record_seconds += record_duration_seconds
+            average_duration_seconds = accumulated_record_seconds / attempted
+            estimated_remaining_seconds = average_duration_seconds * max(total - attempted, 0)
+            estimated_completion_seconds = round(time.perf_counter() - started_at + estimated_remaining_seconds, 4)
+
             if on_progress is not None:
                 on_progress(
                     ImportProgress(
@@ -148,6 +169,10 @@ class ImportTextsUseCase:
                         successful=successful,
                         failed=failed,
                         record=record,
+                        record_duration_seconds=record_duration_seconds,
+                        average_duration_seconds=round(average_duration_seconds, 4),
+                        estimated_remaining_seconds=round(estimated_remaining_seconds, 4),
+                        estimated_completion_seconds=estimated_completion_seconds,
                     )
                 )
 
@@ -156,6 +181,10 @@ class ImportTextsUseCase:
             "attempted": attempted,
             "successful": successful,
             "failed": failed,
+            "elapsed_seconds": round(time.perf_counter() - started_at, 4),
+            "average_record_seconds": round(accumulated_record_seconds / attempted, 4) if attempted else 0.0,
+            "estimated_remaining_seconds": 0.0,
+            "estimated_completion_seconds": round(time.perf_counter() - started_at, 4),
         }
 
     def count_pending_records(self) -> int:

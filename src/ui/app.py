@@ -84,6 +84,17 @@ def log_exec(status: str, job: str, started: float, meta: dict, error: str | Non
     st.session_state.last_tech_log = entry
 
 
+def format_seconds(seconds: float) -> str:
+    total_seconds = max(0, int(round(seconds)))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h {minutes:02d}m {secs:02d}s"
+    if minutes:
+        return f"{minutes}m {secs:02d}s"
+    return f"{secs}s"
+
+
 def handle_extraction_submit(text: str, char_count: int) -> None:
     started = time.time()
     status_box = st.status("Processando extracao...", expanded=True)
@@ -159,7 +170,9 @@ def handle_import_submit() -> None:
                 (
                     f"Processados: {event.attempted}/{event.total} | "
                     f"Sucesso: {event.successful} | Falha: {event.failed} | "
-                    f"Trecho atual: {event.record.trecho_id}"
+                    f"Trecho atual: {event.record.trecho_id} | "
+                    f"Média por registro: {format_seconds(event.average_duration_seconds)} | "
+                    f"ETA: {format_seconds(event.estimated_remaining_seconds)}"
                 )
             )
             status_box.write(
@@ -175,6 +188,12 @@ def handle_import_submit() -> None:
             (
                 f"Finalizado. Processados: {summary['attempted']}/{summary['total']} | "
                 f"Sucesso: {summary['successful']} | Falha: {summary['failed']}"
+            )
+        )
+        st.info(
+            (
+                f"Tempo médio por registro: {format_seconds(float(summary.get('average_record_seconds', 0.0)))} | "
+                f"Tempo total decorrido: {format_seconds(float(summary.get('elapsed_seconds', 0.0)))}"
             )
         )
         status_box.update(label="Importacao concluida", state="complete")

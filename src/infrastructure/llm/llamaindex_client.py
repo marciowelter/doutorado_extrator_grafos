@@ -20,6 +20,7 @@ from src.domain.repositories import KnowledgeExtractor
 
 
 MAX_DEBUG_CHARS = 400
+GLINER_MAX_WORDS = 380  # margem abaixo do limite de 384 tokens do GLiNER
 LLM_NOT_CONFIGURED_ERROR = "Settings.llm is not configured"
 _LAST_EXTRACTION_DEBUG: dict[str, Any] = {"attempts": [], "fallback_used": False}
 
@@ -106,6 +107,25 @@ def _merge_nodes(themes: list[Entity], entities: list[Entity]) -> list[Entity]:
 def _parse_gliner_labels(raw_value: str) -> list[str]:
     labels = [part.strip() for part in raw_value.split(",") if part.strip()]
     return labels or ["pessoa", "organizacao", "local", "data", "evento", "valor"]
+
+
+def _split_text_into_chunks(text: str, max_words: int = GLINER_MAX_WORDS) -> list[tuple[str, int]]:
+    """Divide *text* em fatias de no máximo *max_words* palavras preservando fronteiras
+    de palavras.  Retorna lista de (chunk_text, char_offset) onde char_offset é a
+    posição do primeiro caractere do chunk dentro de *text*."""
+    words = text.split(" ")
+    chunks: list[tuple[str, int]] = []
+    start_word = 0
+    char_offset = 0
+
+    while start_word < len(words):
+        end_word = min(start_word + max_words, len(words))
+        chunk = " ".join(words[start_word:end_word])
+        chunks.append((chunk, char_offset))
+        char_offset += len(chunk) + 1  # +1 pelo espaço entre chunks
+        start_word = end_word
+
+    return chunks
 
 
 def _extract_entity_context(text: str, start: int | None, end: int | None, radius: int = 60) -> str:
@@ -211,16 +231,28 @@ class LlamaIndexKnowledgeExtractor(KnowledgeExtractor):
         return list(themes_by_name.values()), preview
 
     def _extract_entities(self, text: str) -> tuple[list[Entity], str]:
-        gliner_result = self._ner_model.predict_entities(
-            text,
-            labels=self._gliner_labels,
-            threshold=settings.gliner_threshold,
-        )
+        chunks = _split_text_into_chunks(text)
 
         entities_by_name: dict[str, Entity] = {}
         debug_items: list[dict[str, Any]] = []
 
-        for raw in gliner_result:
+        all_results: list[Any] = []
+        for chunk_text, chunk_offset in chunks:
+            chunk_result = self._ner_model.predict_entities(
+                chunk_text,
+                labels=self._gliner_labels,
+                threshold=settings.gliner_threshold,
+            )
+            for raw in chunk_result:
+                raw_start = raw.get("start")
+                raw_end = raw.get("end")
+                if isinstance(raw_start, int | float):
+                    raw["start"] = int(raw_start) + chunk_offset
+                if isinstance(raw_end, int | float):
+                    raw["end"] = int(raw_end) + chunk_offset
+                all_results.append(raw)
+
+        for raw in all_results:
             raw_name = str(raw.get("text", "")).strip()
             if not raw_name:
                 continue
