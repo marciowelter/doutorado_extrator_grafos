@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import traceback
 from dataclasses import dataclass
 from typing import Callable, TypeVar
 
@@ -69,8 +70,17 @@ class RetryEvent:
     error: str
 
 
+@dataclass(frozen=True)
+class RecordFailureEvent:
+    stage: str
+    record: ImportTextRecord
+    error: str
+    traceback: str
+
+
 ProgressCallback = Callable[[ImportProgress], None]
 RetryCallback = Callable[[RetryEvent], None]
+RecordFailureCallback = Callable[[RecordFailureEvent], None]
 T = TypeVar("T")
 
 
@@ -89,6 +99,7 @@ class ImportTextsUseCase:
         self,
         on_progress: ProgressCallback | None = None,
         on_retry: RetryCallback | None = None,
+        on_record_failure: RecordFailureCallback | None = None,
     ) -> dict[str, int | float]:
         started_at = time.perf_counter()
         total = self._run_with_retry(
@@ -125,10 +136,12 @@ class ImportTextsUseCase:
         for record in records:
             record_started_at = time.perf_counter()
             attempted += 1
+            stage = "init"
             try:
                 if record.discurso_id in themes_cache_by_discurso:
                     additional_themes = themes_cache_by_discurso[record.discurso_id]
                 else:
+                    stage = "fetch_datamart_themes"
                     additional_themes = self._run_with_retry(
                         lambda current_record=record: self.fetch_datamart_oque_themes(current_record.discurso_id),
                         on_retry=on_retry,
@@ -136,11 +149,13 @@ class ImportTextsUseCase:
                     )
                     themes_cache_by_discurso[record.discurso_id] = additional_themes
 
+                stage = "extract_text"
                 extraction_cache[record.trecho_id] = self._pipeline.extract_text(
                     record.texto,
                     additional_themes=additional_themes,
                 )
 
+                stage = "save_extraction"
                 self._run_with_retry(
                     lambda current_record=record: self._pipeline.save_extraction(
                         extraction_cache[current_record.trecho_id],
@@ -148,6 +163,7 @@ class ImportTextsUseCase:
                     on_retry=on_retry,
                     context=f"persistencia do trecho_id={record.trecho_id}",
                 )
+                stage = "mark_record_processed"
                 self._run_with_retry(
                     lambda current_record=record: self.mark_record_processed(current_record.trecho_id),
                     on_retry=on_retry,
@@ -156,9 +172,18 @@ class ImportTextsUseCase:
 
                 extraction_cache.pop(record.trecho_id, None)
                 successful += 1
-            except Exception:
+            except Exception as exc:
                 extraction_cache.pop(record.trecho_id, None)
                 failed += 1
+                if on_record_failure is not None:
+                    on_record_failure(
+                        RecordFailureEvent(
+                            stage=stage,
+                            record=record,
+                            error=str(exc),
+                            traceback=traceback.format_exc(),
+                        )
+                    )
 
             record_duration_seconds = round(time.perf_counter() - record_started_at, 4)
             accumulated_record_seconds += record_duration_seconds
@@ -255,7 +280,15 @@ class ImportTextsUseCase:
                     raise
                 if attempt >= MAX_DB_ATTEMPTS:
                     break
-                self._reconnect_databases()
+                try:
+                    self._reconnect_databases()
+                except Exception as reconnect_exc:
+                    raise RuntimeError(
+                        (
+                            "Falha ao reconectar banco durante operacao transiente "
+                            f"({context}). Erro original: {exc!r}"
+                        )
+                    ) from reconnect_exc
                 if on_retry is not None:
                     on_retry(
                         RetryEvent(
