@@ -251,6 +251,8 @@ class ImportTextsUseCase:
                 return operation()
             except Exception as exc:
                 error = exc
+                if not self._is_transient_connection_error(exc):
+                    raise
                 if attempt >= MAX_DB_ATTEMPTS:
                     break
                 self._reconnect_databases()
@@ -267,6 +269,16 @@ class ImportTextsUseCase:
 
         assert error is not None
         raise error
+
+    def _is_transient_connection_error(self, error: Exception) -> bool:
+        if isinstance(error, (psycopg.OperationalError, psycopg.InterfaceError)):
+            return True
+
+        sqlstate = getattr(error, "sqlstate", None)
+        if isinstance(sqlstate, str) and sqlstate.startswith("08"):
+            return True
+
+        return False
 
     def _reconnect_databases(self) -> None:
         self._conn = get_postgres_connection(dbname="banco", schema="doutorado")

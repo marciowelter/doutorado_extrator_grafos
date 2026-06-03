@@ -18,6 +18,10 @@ class Settings:
     postgres_user: str = os.getenv("POSTGRES_USER", "")
     postgres_password: str = os.getenv("POSTGRES_PASSWORD", "")
     postgres_schema: str = os.getenv("POSTGRES_SCHEMA")
+    postgres_connect_timeout: int = int(os.getenv("POSTGRES_CONNECT_TIMEOUT", "10"))
+    postgres_keepalives_idle: int = int(os.getenv("POSTGRES_KEEPALIVES_IDLE", "30"))
+    postgres_keepalives_interval: int = int(os.getenv("POSTGRES_KEEPALIVES_INTERVAL", "10"))
+    postgres_keepalives_count: int = int(os.getenv("POSTGRES_KEEPALIVES_COUNT", "5"))
 
     ollama_base_url: str = os.getenv("OLLAMA_BASE_URL")
     ollama_model: str = os.getenv("OLLAMA_MODEL")

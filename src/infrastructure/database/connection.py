@@ -14,6 +14,11 @@ def get_postgres_connection(dbname: str | None = None, schema: str | None = None
         user=settings.postgres_user,
         password=settings.postgres_password,
         autocommit=True,
+        connect_timeout=settings.postgres_connect_timeout,
+        keepalives=1,
+        keepalives_idle=settings.postgres_keepalives_idle,
+        keepalives_interval=settings.postgres_keepalives_interval,
+        keepalives_count=settings.postgres_keepalives_count,
     )
 
     if schema:
