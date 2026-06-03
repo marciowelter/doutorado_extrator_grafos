@@ -34,3 +34,34 @@ def init_apache_age(conn: psycopg.Connection) -> None:
             ") THEN create_graph(%s) ELSE NULL END;",
             (settings.graph_name, settings.graph_name),
         )
+        _ensure_entity_name_index(cursor)
+
+
+def _ensure_entity_name_index(cursor: psycopg.Cursor) -> None:
+    # Tenta a sintaxe nativa do AGE primeiro; em ambientes sem suporte, cai para
+    # índice por expressão na tabela física do label.
+    statements = [
+        sql.SQL(
+            "SELECT * FROM cypher({}, $$ "
+            "CREATE INDEX IF NOT EXISTS FOR (n:Entidade) ON (n.name) "
+            "$$) as (result agtype);"
+        ).format(sql.Literal(settings.graph_name)),
+        sql.SQL(
+            "CREATE INDEX IF NOT EXISTS {} ON {}.{} ((properties ->> 'name'));"
+        ).format(
+            sql.Identifier(f"idx_{settings.graph_name}_entidade_name"),
+            sql.Identifier(settings.graph_name),
+            sql.Identifier("Entidade"),
+        ),
+    ]
+
+    for statement in statements:
+        try:
+            cursor.execute(statement)
+            return
+        except psycopg.Error as exc:
+            # O label pode ainda nao existir (42P01) no primeiro bootstrap.
+            # Nesse caso, apenas segue para nao bloquear a inicializacao.
+            if exc.sqlstate in {"42P07", "42P01"}:
+                return
+            continue

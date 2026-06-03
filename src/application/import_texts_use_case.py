@@ -119,17 +119,22 @@ class ImportTextsUseCase:
         successful = 0
         failed = 0
         extraction_cache: dict[int, KnowledgeGraphExtraction] = {}
+        themes_cache_by_discurso: dict[int, list[str]] = {}
         accumulated_record_seconds = 0.0
 
         for record in records:
             record_started_at = time.perf_counter()
             attempted += 1
             try:
-                additional_themes = self._run_with_retry(
-                    lambda current_record=record: self.fetch_datamart_oque_themes(current_record.discurso_id),
-                    on_retry=on_retry,
-                    context=f"consulta de temas datamart_oque para discurso_id={record.discurso_id}",
-                )
+                if record.discurso_id in themes_cache_by_discurso:
+                    additional_themes = themes_cache_by_discurso[record.discurso_id]
+                else:
+                    additional_themes = self._run_with_retry(
+                        lambda current_record=record: self.fetch_datamart_oque_themes(current_record.discurso_id),
+                        on_retry=on_retry,
+                        context=f"consulta de temas datamart_oque para discurso_id={record.discurso_id}",
+                    )
+                    themes_cache_by_discurso[record.discurso_id] = additional_themes
 
                 extraction_cache[record.trecho_id] = self._pipeline.extract_text(
                     record.texto,

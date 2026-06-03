@@ -182,6 +182,7 @@ def configure_llamaindex() -> None:
         model=settings.ollama_model,
         base_url=settings.ollama_base_url,
         request_timeout=settings.ollama_timeout,
+        keep_alive=settings.ollama_keep_alive,
         temperature=0,
     )
 
