@@ -75,7 +75,8 @@ def _run_import_texts(progress_batch_size: int) -> dict[str, int | float]:
         _print_json_log(
             {
                 "timestamp": _now_iso(),
-                "event": "db_retry",
+                "event": "retry",
+                "retry_scope": "database",
                 "attempt": event.attempt,
                 "max_attempts": event.max_attempts,
                 "context": event.context,

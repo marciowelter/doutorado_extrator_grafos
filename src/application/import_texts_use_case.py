@@ -7,6 +7,7 @@ from typing import Callable, TypeVar
 
 import psycopg
 
+from config.settings import settings
 from src.domain.models import KnowledgeGraphExtraction
 from src.application.pipeline_use_case import PipelineUseCase
 from src.infrastructure.database.connection import get_postgres_connection
@@ -38,8 +39,9 @@ order by
   trecho.seq
 """.strip()
 
-MAX_DB_ATTEMPTS = 3
-DB_RETRY_DELAY_SECONDS = 2
+MAX_DB_ATTEMPTS = max(1, settings.postgres_retry_attempts)
+DB_RETRY_BASE_DELAY_SECONDS = max(0.0, settings.postgres_retry_base_delay_seconds)
+DB_RETRY_MAX_DELAY_SECONDS = max(DB_RETRY_BASE_DELAY_SECONDS, settings.postgres_retry_max_delay_seconds)
 
 
 @dataclass(frozen=True)
@@ -298,7 +300,11 @@ class ImportTextsUseCase:
                             error=str(exc),
                         )
                     )
-                time.sleep(DB_RETRY_DELAY_SECONDS)
+                backoff_seconds = min(
+                    DB_RETRY_BASE_DELAY_SECONDS * (2 ** (attempt - 1)),
+                    DB_RETRY_MAX_DELAY_SECONDS,
+                )
+                time.sleep(backoff_seconds)
 
         assert error is not None
         raise error
@@ -311,12 +317,36 @@ class ImportTextsUseCase:
         if isinstance(sqlstate, str) and sqlstate.startswith("08"):
             return True
 
+        lowered = str(error).lower()
+        transient_hints = (
+            "consuming input failed",
+            "ssl error",
+            "unexpected eof",
+            "connection reset",
+            "server closed the connection unexpectedly",
+            "connection not open",
+            "broken pipe",
+        )
+        if any(hint in lowered for hint in transient_hints):
+            return True
+
         return False
 
     def _reconnect_databases(self) -> None:
+        old_conn = self._conn
         self._conn = get_postgres_connection(dbname="banco", schema="doutorado")
+        try:
+            old_conn.close()
+        except Exception:
+            pass
+
         if self._managed_pipeline:
+            old_pipeline_conn = self._pipeline._conn
             self._pipeline = PipelineUseCase(conn=get_postgres_connection(dbname="banco"))
             self._pipeline.bootstrap()
+            try:
+                old_pipeline_conn.close()
+            except Exception:
+                pass
         else:
             self._pipeline.reconnect()
