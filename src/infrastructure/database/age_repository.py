@@ -128,14 +128,35 @@ class AgeRepository(GraphRepository):
         cursor.execute(cypher, (_to_agtype_params(params),))
 
     def _fetch_graph_nodes(self) -> list[_GraphNode]:
-        query = sql.SQL(
-            "SELECT * FROM cypher({}, $$ "
-            "MATCH (n:Entidade) "
-            "RETURN id(n), coalesce(n.name, ''), coalesce(n.label, 'ENTIDADE'), coalesce(n.properties, {{}}) "
-            "$$, %s::agtype) as (node_id agtype, name agtype, label agtype, properties agtype);"
-        ).format(sql.Literal(settings.graph_name))
+        return self.fetch_entities()
+
+    def fetch_entities(self, limit: int | None = None, offset: int = 0) -> list[_GraphNode]:
+        if limit is None and offset == 0:
+            query = sql.SQL(
+                "SELECT * FROM cypher({}, $$ "
+                "MATCH (n:Entidade) "
+                "RETURN id(n), coalesce(n.name, ''), coalesce(n.label, 'ENTIDADE'), coalesce(n.properties, {{}}) "
+                "ORDER BY id(n) "
+                "$$, %s::agtype) as (node_id agtype, name agtype, label agtype, properties agtype);"
+            ).format(sql.Literal(settings.graph_name))
+            params: dict[str, Any] = {}
+        else:
+            query = sql.SQL(
+                "SELECT * FROM cypher({}, $$ "
+                "MATCH (n:Entidade) "
+                "RETURN id(n), coalesce(n.name, ''), coalesce(n.label, 'ENTIDADE'), coalesce(n.properties, {{}}) "
+                "ORDER BY id(n) "
+                "SKIP $offset "
+                "LIMIT $limit "
+                "$$, %s::agtype) as (node_id agtype, name agtype, label agtype, properties agtype);"
+            ).format(sql.Literal(settings.graph_name))
+            params = {
+                "offset": max(0, int(offset)),
+                "limit": max(1, int(limit or 1)),
+            }
+
         with self._conn.cursor() as cursor:
-            cursor.execute(query, (_to_agtype_params({}),))
+            cursor.execute(query, (_to_agtype_params(params),))
             rows = cursor.fetchall()
 
         result: list[_GraphNode] = []
@@ -149,6 +170,94 @@ class AgeRepository(GraphRepository):
                 )
             )
         return result
+
+    def count_entities(self) -> int:
+        query = sql.SQL("SELECT count(*) FROM {}.{}").format(
+            sql.Identifier(settings.graph_name),
+            sql.Identifier("Entidade"),
+        )
+        with self._conn.cursor() as cursor:
+            cursor.execute(query)
+            row = cursor.fetchone()
+        return int(row[0]) if row else 0
+
+    def fetch_random_entities(
+        self,
+        limit: int,
+        *,
+        exclude_first: int = 0,
+    ) -> list[_GraphNode]:
+        safe_limit = max(1, int(limit))
+        table = sql.Identifier(settings.graph_name, "Entidade")
+
+        if exclude_first > 0:
+            query = sql.SQL(
+                "SELECT id, properties::text "
+                "FROM {table} "
+                "WHERE id NOT IN ("
+                "SELECT id FROM {table} ORDER BY id LIMIT %s"
+                ") "
+                "ORDER BY random() "
+                "LIMIT %s"
+            ).format(table=table)
+            params = (exclude_first, safe_limit)
+        else:
+            query = sql.SQL(
+                "SELECT id, properties::text "
+                "FROM {table} "
+                "ORDER BY random() "
+                "LIMIT %s"
+            ).format(table=table)
+            params = (safe_limit,)
+
+        with self._conn.cursor() as cursor:
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+
+        result: list[_GraphNode] = []
+        for node_id, properties_text in rows:
+            parsed_properties = json.loads(properties_text)
+            inner_properties = parsed_properties.get("properties")
+            node_properties = inner_properties if isinstance(inner_properties, dict) else parsed_properties
+            result.append(
+                _GraphNode(
+                    node_id=int(node_id),
+                    name=str(parsed_properties.get("name", "")).strip(),
+                    label=str(parsed_properties.get("label", "ENTIDADE")).strip() or "ENTIDADE",
+                    properties=dict(node_properties) if isinstance(node_properties, dict) else {},
+                )
+            )
+        return result
+
+    def update_entity(
+        self,
+        *,
+        node_id: int,
+        name: str,
+        label: str,
+        properties: dict[str, Any],
+    ) -> None:
+        normalized_name = normalize_graph_name(name)
+        if not normalized_name:
+            return
+
+        normalized_label = normalize_graph_category(label) or "ENTIDADE"
+        normalized_properties = dict(properties)
+        nested_properties = normalized_properties.get("properties")
+        if isinstance(nested_properties, dict):
+            nested_copy = dict(nested_properties)
+            if normalized_label == "TEMA":
+                nested_copy["categoria"] = "TEMA"
+            normalized_properties["properties"] = nested_copy
+
+        with self._conn.cursor() as cursor:
+            self._update_node_by_id(
+                cursor,
+                node_id=node_id,
+                name=normalized_name,
+                label=normalized_label,
+                properties=normalized_properties,
+            )
 
     def _fetch_graph_edges(self) -> list[_GraphEdge]:
         query = sql.SQL(
