@@ -8,7 +8,8 @@ from typing import Callable, TypeVar
 import psycopg
 
 from config.settings import settings
-from src.domain.models import KnowledgeGraphExtraction
+from src.domain.discurso_context import DiscursoContext
+from src.domain.models import Entity, KnowledgeGraphExtraction
 from src.application.pipeline_use_case import PipelineUseCase
 from src.infrastructure.database.connection import get_postgres_connection
 
@@ -16,6 +17,7 @@ IMPORT_SQL = """
 select
   discurso.id as discurso_id,
   trecho.id as trecho_id,
+  TO_CHAR(discurso.quando, 'DD/MM/YYYY') as data_ocorrencia,
   CONCAT(
     'quando: "', TO_CHAR(discurso.quando, 'DD/MM/YYYY'), '", ',
     'como: "', como.como, '", ',
@@ -44,10 +46,19 @@ DB_RETRY_BASE_DELAY_SECONDS = max(0.0, settings.postgres_retry_base_delay_second
 DB_RETRY_MAX_DELAY_SECONDS = max(DB_RETRY_BASE_DELAY_SECONDS, settings.postgres_retry_max_delay_seconds)
 
 
+def extract_theme_entities(extraction: KnowledgeGraphExtraction) -> list[Entity]:
+    return [
+        entity.model_copy(deep=True)
+        for entity in extraction.entities
+        if entity.label == "TEMA"
+    ]
+
+
 @dataclass(frozen=True)
 class ImportTextRecord:
     discurso_id: int
     trecho_id: int
+    data_ocorrencia: str
     texto: str
 
 
@@ -133,6 +144,7 @@ class ImportTextsUseCase:
         failed = 0
         extraction_cache: dict[int, KnowledgeGraphExtraction] = {}
         themes_cache_by_discurso: dict[int, list[str]] = {}
+        bertopic_themes_cache_by_discurso: dict[int, list[Entity]] = {}
         accumulated_record_seconds = 0.0
 
         for record in records:
@@ -152,10 +164,21 @@ class ImportTextsUseCase:
                     themes_cache_by_discurso[record.discurso_id] = additional_themes
 
                 stage = "extract_text"
+                discurso_context = DiscursoContext(
+                    discurso_id=record.discurso_id,
+                    data_ocorrencia=record.data_ocorrencia,
+                )
+                cached_themes = bertopic_themes_cache_by_discurso.get(record.discurso_id)
                 extraction_cache[record.trecho_id] = self._pipeline.extract_text(
                     record.texto,
-                    additional_themes=additional_themes,
+                    additional_themes=additional_themes if cached_themes is None else None,
+                    discurso_context=discurso_context,
+                    cached_themes=cached_themes,
                 )
+                if record.discurso_id not in bertopic_themes_cache_by_discurso:
+                    theme_entities = extract_theme_entities(extraction_cache[record.trecho_id])
+                    if theme_entities:
+                        bertopic_themes_cache_by_discurso[record.discurso_id] = theme_entities
 
                 stage = "save_extraction"
                 self._run_with_retry(
@@ -235,9 +258,10 @@ class ImportTextsUseCase:
             ImportTextRecord(
                 discurso_id=int(discurso_id),
                 trecho_id=int(trecho_id),
+                data_ocorrencia=str(data_ocorrencia),
                 texto=str(texto),
             )
-            for discurso_id, trecho_id, texto in rows
+            for discurso_id, trecho_id, data_ocorrencia, texto in rows
         ]
 
     def mark_record_processed(self, trecho_id: int) -> None:

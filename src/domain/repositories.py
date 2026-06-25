@@ -3,7 +3,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-from src.domain.models import KnowledgeGraphExtraction
+from src.domain.discurso_context import DiscursoContext
+from src.domain.models import Entity, KnowledgeGraphExtraction
 
 
 @dataclass(frozen=True)
@@ -37,5 +38,7 @@ class KnowledgeExtractor(ABC):
         self,
         text: str,
         additional_themes: list[str] | None = None,
+        discurso_context: DiscursoContext | None = None,
+        cached_themes: list[Entity] | None = None,
     ) -> KnowledgeGraphExtraction:
         raise NotImplementedError

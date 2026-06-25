@@ -12,7 +12,9 @@ ImportTextsUseCase / PipelineUseCase
         │
         ├─ GLiNER ──────────► entidades (PESSOA, ORGANIZACAO, LOCAL, …)
         ├─ BERTopic ────────► temas (SAUDE, EDUCACAO, …)
-        └─ relacionamentos fixos ENTIDADE → TEMA (RELACIONA)
+        ├─ datamart_oque ───► temas adicionais por discurso_id
+        └─ import batch ────► TEMA/ENTIDADE → DISCURSO (OCORRE_EM)
+        │   texto avulso ───► ENTIDADE → TEMA (RELACIONA, legado)
         │
         ▼
 Apache AGE (grafo doutorado_graph, nós :Entidade)
@@ -27,10 +29,13 @@ Todos os nós usam o label Apache AGE `:Entidade`. A distinção semântica fica
 
 | Campo | Valores | Descrição |
 |-------|---------|-----------|
-| `label` | `TEMA`, `ENTIDADE` | Tipo do nó |
-| `properties.categoria` | `TEMA`, `PESSOA`, `ORGANIZACAO`, `LOCAL`, … | Categoria fina (GLiNER ou `TEMA`) |
+| `label` | `TEMA`, `ENTIDADE`, `DISCURSO` | Tipo do nó |
+| `properties.categoria` | `TEMA`, `PESSOA`, `ORGANIZACAO`, `LOCAL`, `DISCURSO`, … | Categoria fina (GLiNER, `TEMA` ou hub de discurso) |
 | `properties.contexto` | texto | Trecho de contexto da extração |
-| `name` | string normalizada | Identificador do nó |
+| `properties.data_ocorrencia` | `DD/MM/YYYY` | Data do discurso (apenas nós `DISCURSO`) |
+| `name` | string normalizada | Identificador do nó (`discurso_id:N` para hubs de discurso) |
+
+No **import batch** (`--import-texts`), cada trecho gera arestas `OCORRE_EM` de todos os temas e entidades extraídos para o nó hub `discurso_id:{id}` do discurso correspondente. Um discurso com vários trechos reutiliza o mesmo hub. Temas BERTopic do primeiro trecho de cada discurso são cacheados por `discurso_id` (trechos seguintes rodam só GLiNER). A persistência no AGE usa MERGE em batch (`UNWIND`). Extração avulsa (UI/CLI sem contexto de discurso) mantém o modelo legado `ENTIDADE → TEMA` com relação `RELACIONA`.
 
 Tabela física AGE: `{AGE_GRAPH_NAME}."Entidade"` (ex.: `doutorado_graph."Entidade"`).
 

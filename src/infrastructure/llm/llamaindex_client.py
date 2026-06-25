@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 
 from config.settings import settings
+from src.domain.discurso_context import DiscursoContext
 from src.domain.models import Entity, KnowledgeGraphExtraction, Relationship
 from src.domain.normalization import (
     normalize_for_match,
@@ -312,6 +313,43 @@ def _build_fixed_relationships(entities: list[Entity], themes: list[Entity]) -> 
                     properties={},
                 )
             )
+
+    return relationships
+
+
+def _build_discurso_hub_node(discurso_context: DiscursoContext) -> Entity:
+    return Entity(
+        name=discurso_context.hub_name,
+        label="DISCURSO",
+        properties={
+            "categoria": "DISCURSO",
+            "data_ocorrencia": discurso_context.data_ocorrencia,
+        },
+    )
+
+
+def _build_discurso_hub_relationships(
+    nodes: list[Entity],
+    hub_name: str,
+) -> list[Relationship]:
+    relationships: list[Relationship] = []
+    seen: set[tuple[str, str]] = set()
+
+    for node in nodes:
+        if node.name == hub_name:
+            continue
+        key = (node.name, hub_name)
+        if key in seen:
+            continue
+        seen.add(key)
+        relationships.append(
+            Relationship(
+                source=node.name,
+                target=hub_name,
+                relation="OCORRE_EM",
+                properties={},
+            )
+        )
 
     return relationships
 
@@ -963,16 +1001,24 @@ class LlamaIndexKnowledgeExtractor(KnowledgeExtractor):
         self,
         text: str,
         additional_themes: list[str] | None = None,
+        discurso_context: DiscursoContext | None = None,
+        cached_themes: list[Entity] | None = None,
     ) -> KnowledgeGraphExtraction:
         started_at = time.perf_counter()
         attempts: list[dict[str, Any]] = []
 
         themes_started_at = time.perf_counter()
-        themes, themes_preview = self._extract_themes(text, additional_themes=additional_themes)
+        if cached_themes is not None:
+            themes = [theme.model_copy(deep=True) for theme in cached_themes]
+            themes_preview = f"cached_themes={len(themes)}"
+            themes_attempt = "themes_cached_by_discurso"
+        else:
+            themes, themes_preview = self._extract_themes(text, additional_themes=additional_themes)
+            themes_attempt = f"themes_structured_predict_{self._theme_provider}"
         themes_seconds = round(time.perf_counter() - themes_started_at, 4)
         attempts.append(
             {
-                "attempt": f"themes_structured_predict_{self._theme_provider}",
+                "attempt": themes_attempt,
                 "ok": bool(themes),
                 "raw_preview": themes_preview,
                 "theme_count": len(themes),
@@ -980,6 +1026,7 @@ class LlamaIndexKnowledgeExtractor(KnowledgeExtractor):
                 "duration_seconds": themes_seconds,
                 "provider": self._theme_provider,
                 "model": self._provider_model_name(),
+                "cached": cached_themes is not None,
             }
         )
 
@@ -997,6 +1044,10 @@ class LlamaIndexKnowledgeExtractor(KnowledgeExtractor):
         )
 
         nodes = _merge_nodes(themes, entities)
+        hub_node: Entity | None = None
+        if discurso_context is not None:
+            hub_node = _build_discurso_hub_node(discurso_context)
+            nodes = _merge_nodes(nodes, [hub_node])
 
         if not nodes:
             _set_last_extraction_debug(
@@ -1015,13 +1066,25 @@ class LlamaIndexKnowledgeExtractor(KnowledgeExtractor):
             return KnowledgeGraphExtraction(entities=[], relationships=[])
 
         relationships_started_at = time.perf_counter()
-        relationships = _build_fixed_relationships(entities=entities, themes=themes)
+        if discurso_context is not None and hub_node is not None:
+            relationships = _build_discurso_hub_relationships(nodes, hub_node.name)
+            relationship_attempt = "relationships_discurso_hub"
+            relationship_preview = (
+                f"hub={hub_node.name} nodes={len(nodes) - 1} "
+                f"data_ocorrencia={discurso_context.data_ocorrencia}"
+            )
+            pipeline_name = "gliner_entities_bertopic_themes_discurso_hub"
+        else:
+            relationships = _build_fixed_relationships(entities=entities, themes=themes)
+            relationship_attempt = "relationships_cartesian_entities_themes"
+            relationship_preview = f"entities={len(entities)} themes={len(themes)}"
+            pipeline_name = "gliner_entities_bertopic_themes_fixed_relationships"
         relationships_seconds = round(time.perf_counter() - relationships_started_at, 4)
         attempts.append(
             {
-                "attempt": "relationships_cartesian_entities_themes",
+                "attempt": relationship_attempt,
                 "ok": True,
-                "raw_preview": f"entities={len(entities)} themes={len(themes)}",
+                "raw_preview": relationship_preview,
                 "triplet_count": len(relationships),
                 "duration_seconds": relationships_seconds,
             }
@@ -1029,7 +1092,7 @@ class LlamaIndexKnowledgeExtractor(KnowledgeExtractor):
 
         _set_last_extraction_debug(
             {
-                "pipeline": "gliner_entities_bertopic_themes_fixed_relationships",
+                "pipeline": pipeline_name,
                 "attempts": attempts,
                 "timings": {
                     "themes_seconds": themes_seconds,

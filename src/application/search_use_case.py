@@ -17,7 +17,14 @@ THEME_RELATION_HINTS = {
     "debate",
     "argumenta_sobre",
     "explica_sobre",
+    "ocorre_em",
 }
+
+
+def _is_discurso_node(item: dict[str, str]) -> bool:
+    source_label = item.get("source_label", "").upper()
+    target_label = item.get("target_label", "").upper()
+    return source_label == "DISCURSO" or target_label == "DISCURSO"
 
 
 def _normalize_relation(value: str) -> str:
@@ -43,7 +50,11 @@ class SearchUseCase:
 
     def search(self, keyword: str, limit: int = 5) -> dict[str, list[dict[str, str]]]:
         graph_results = self._age_repo.search_graph(keyword, limit=max(10, limit * 2))
-        theme_graph_results = [item for item in graph_results if _is_theme_relation(item.get("relation", ""))]
+        theme_graph_results = [
+            item
+            for item in graph_results
+            if _is_theme_relation(item.get("relation", "")) or _is_discurso_node(item)
+        ]
         return {
             "graph": graph_results,
             "graph_theme": theme_graph_results,
