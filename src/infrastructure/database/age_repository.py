@@ -34,6 +34,66 @@ def _clean_agtype_scalar(value: object) -> str:
     return rendered
 
 
+def _prepare_entity_payload(entity: Entity) -> dict[str, Any] | None:
+    normalized_name = normalize_graph_name(entity.name)
+    if not normalized_name:
+        return None
+
+    normalized_label = normalize_graph_category(entity.label) or "ENTIDADE"
+    normalized_properties = dict(entity.properties)
+    normalized_properties["categoria"] = normalize_graph_category(
+        str(normalized_properties.get("categoria", normalized_label))
+    )
+    return {
+        "name": normalized_name,
+        "label": normalized_label,
+        "properties": normalized_properties,
+    }
+
+
+def _prepare_relationship_payload(relationship: Relationship) -> dict[str, Any] | None:
+    normalized_source = normalize_graph_name(relationship.source)
+    normalized_target = normalize_graph_name(relationship.target)
+    if not normalized_source or not normalized_target:
+        return None
+
+    return {
+        "source": normalized_source,
+        "target": normalized_target,
+        "properties": relationship.properties,
+    }
+
+
+def _prepare_entities_batch(entities: list[Entity]) -> list[dict[str, Any]]:
+    prepared: list[dict[str, Any]] = []
+    seen_names: set[str] = set()
+    for entity in entities:
+        payload = _prepare_entity_payload(entity)
+        if payload is None or payload["name"] in seen_names:
+            continue
+        seen_names.add(payload["name"])
+        prepared.append(payload)
+    return prepared
+
+
+def _prepare_relationships_batch(
+    relationships: list[Relationship],
+) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    seen: set[tuple[str, str, str]] = set()
+    for relationship in relationships:
+        payload = _prepare_relationship_payload(relationship)
+        if payload is None:
+            continue
+        relation = _safe_relation_label(relationship.relation)
+        key = (relation, payload["source"], payload["target"])
+        if key in seen:
+            continue
+        seen.add(key)
+        grouped[relation].append(payload)
+    return grouped
+
+
 def _parse_agtype_json(value: object) -> Any:
     rendered = _clean_agtype_scalar(value)
     if not rendered:
@@ -75,11 +135,48 @@ class AgeRepository(GraphRepository):
         init_apache_age(self._conn)
 
     def save_extraction(self, extraction: KnowledgeGraphExtraction) -> None:
+        entities = _prepare_entities_batch(extraction.entities)
+        relationships_by_type = _prepare_relationships_batch(extraction.relationships)
+
         with self._conn.cursor() as cursor:
-            for entity in extraction.entities:
-                self._merge_entity(cursor, entity)
-            for relationship in extraction.relationships:
-                self._merge_relationship(cursor, relationship)
+            if entities:
+                self._merge_entities_batch(cursor, entities)
+            for relation, relationships in relationships_by_type.items():
+                self._merge_relationships_batch(cursor, relation, relationships)
+
+    def _merge_entities_batch(self, cursor: psycopg.Cursor, entities: list[dict[str, Any]]) -> None:
+        if not entities:
+            return
+
+        cypher = sql.SQL(
+            "SELECT * FROM cypher({}, $$ "
+            "UNWIND $entities AS entity "
+            "MERGE (n:Entidade {{name: entity.name}}) "
+            "SET n.label = entity.label, n.properties = entity.properties "
+            "RETURN count(n) $$, %s::agtype) as (merged agtype);"
+        ).format(sql.Literal(settings.graph_name))
+        cursor.execute(cypher, (_to_agtype_params({"entities": entities}),))
+
+    def _merge_relationships_batch(
+        self,
+        cursor: psycopg.Cursor,
+        relation: str,
+        relationships: list[dict[str, Any]],
+    ) -> None:
+        if not relationships:
+            return
+
+        relation_label = _safe_relation_label(relation)
+        cypher = sql.SQL(
+            "SELECT * FROM cypher({}, $$ "
+            "UNWIND $relationships AS rel "
+            "MERGE (a:Entidade {{name: rel.source}}) "
+            "MERGE (b:Entidade {{name: rel.target}}) "
+            "MERGE (a)-[r:{}]->(b) "
+            "SET r.properties = rel.properties "
+            "RETURN count(r) $$, %s::agtype) as (merged agtype);"
+        ).format(sql.Literal(settings.graph_name), sql.SQL(relation_label))
+        cursor.execute(cypher, (_to_agtype_params({"relationships": relationships}),))
 
     def _merge_entity(self, cursor: psycopg.Cursor, entity: Entity) -> None:
         normalized_name = normalize_graph_name(entity.name)
