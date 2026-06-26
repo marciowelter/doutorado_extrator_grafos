@@ -18,7 +18,7 @@ from src.application.import_texts_use_case import (
 from src.application.pipeline_use_case import PipelineUseCase
 
 
-DEFAULT_BACKGROUND_LOG = "import_texts_background.log"
+DEFAULT_BACKGROUND_LOG = "logs/import_texts_background.log"
 DEFAULT_PROGRESS_BATCH_SIZE = 25
 DEFAULT_LABEL_CORRECTION_LOG = "/tmp/doutorado_label_correction.log"
 DEFAULT_LABEL_CORRECTION_LIMIT = 100
