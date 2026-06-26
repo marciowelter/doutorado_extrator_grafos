@@ -7,6 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from src.application.ata_oque_use_case import AtaOqueProgress, AtaOqueUseCase
 from src.application.correct_labels_use_case import CorrectLabelsUseCase, LabelCorrectionRecord
 from src.application.import_texts_use_case import (
     ImportTextsUseCase,
@@ -105,6 +106,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Seleciona nos aleatorios (incompativel com --correct-labels-all)",
     )
     parser.add_argument(
+        "--populate-ata-oque",
+        action="store_true",
+        help="Extrai e grava temas em datamart_oque para discursos originados de atas",
+    )
+    parser.add_argument(
+        "--populate-ata-oque-limit",
+        type=int,
+        default=None,
+        help="Limita a quantidade de discursos de ata processados no modo --populate-ata-oque",
+    )
+    parser.add_argument(
+        "--populate-ata-oque-reset-grafo",
+        action="store_true",
+        help="Marca trechos de atas como pendentes (grafo=false) apos popular datamart_oque",
+    )
+    parser.add_argument(
         "--correct-labels-exclude-first",
         type=int,
         default=0,
@@ -119,6 +136,84 @@ def _now_iso() -> str:
 
 def _print_json_log(payload: dict) -> None:
     print(json.dumps(payload, ensure_ascii=False), flush=True)
+
+
+def _run_populate_ata_oque(
+    *,
+    limit: int | None,
+    reset_ata_grafo: bool,
+) -> dict[str, int | float | bool]:
+    use_case = AtaOqueUseCase()
+    last_logged_batch = 0
+    batch_size = 25
+
+    def on_progress(event: AtaOqueProgress) -> None:
+        nonlocal last_logged_batch
+        current_batch = (event.processed - 1) // batch_size + 1
+        should_log = event.processed == event.total or current_batch > last_logged_batch
+        if not should_log:
+            return
+
+        last_logged_batch = current_batch
+        _print_json_log(
+            {
+                "timestamp": _now_iso(),
+                "event": "populate_ata_oque_progress",
+                "batch": current_batch,
+                "processed": event.processed,
+                "total": event.total,
+                "populated": event.populated,
+                "skipped": event.skipped,
+                "failed": event.failed,
+                "current_discurso_id": event.current_discurso_id,
+            }
+        )
+
+    summary = use_case.populate_all(
+        limit=limit,
+        reset_ata_grafo=reset_ata_grafo,
+        on_progress=on_progress,
+    )
+    return {
+        "total": summary.total,
+        "populated": summary.populated,
+        "skipped": summary.skipped,
+        "failed": summary.failed,
+        "trechos_reset": summary.trechos_reset,
+        "elapsed_seconds": summary.elapsed_seconds,
+        "reset_ata_grafo": reset_ata_grafo,
+    }
+
+
+def _spawn_background_populate_ata_oque(
+    *,
+    log_path: str,
+    limit: int | None,
+    reset_ata_grafo: bool,
+) -> int:
+    target_log = Path(log_path).resolve()
+    target_log.parent.mkdir(parents=True, exist_ok=True)
+
+    cmd = [
+        sys.executable,
+        "main.py",
+        "--populate-ata-oque",
+    ]
+    if limit is not None:
+        cmd.extend(["--populate-ata-oque-limit", str(max(1, int(limit)))])
+    if reset_ata_grafo:
+        cmd.append("--populate-ata-oque-reset-grafo")
+
+    with target_log.open("a", encoding="utf-8") as log_file:
+        process = subprocess.Popen(
+            cmd,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+            cwd=str(Path(__file__).resolve().parent),
+        )
+
+    return process.pid
 
 
 def _run_import_texts(progress_batch_size: int) -> dict[str, int | float]:
@@ -315,8 +410,8 @@ def _spawn_background_import(log_path: str, progress_batch_size: int) -> int:
 
 
 def _validate_batch_args(args: argparse.Namespace) -> None:
-    if args.background and not args.import_texts and not args.correct_labels:
-        raise SystemExit("Use --background somente junto com --import-texts ou --correct-labels.")
+    if args.background and not args.import_texts and not args.correct_labels and not args.populate_ata_oque:
+        raise SystemExit("Use --background somente junto com --import-texts, --populate-ata-oque ou --correct-labels.")
 
     if args.correct_labels_all and args.correct_labels_random:
         raise SystemExit("Use --correct-labels-all ou --correct-labels-random, nao ambos.")
@@ -328,6 +423,31 @@ def _validate_batch_args(args: argparse.Namespace) -> None:
 def main() -> None:
     args = build_parser().parse_args()
     _validate_batch_args(args)
+
+    if args.populate_ata_oque and args.background:
+        pid = _spawn_background_populate_ata_oque(
+            log_path=args.background_log,
+            limit=args.populate_ata_oque_limit,
+            reset_ata_grafo=args.populate_ata_oque_reset_grafo,
+        )
+        payload = {
+            "status": "started",
+            "job": "populate_ata_oque",
+            "pid": pid,
+            "log": str(Path(args.background_log).resolve()),
+            "reset_ata_grafo": args.populate_ata_oque_reset_grafo,
+            "hint": "Acompanhe com: tail -f <log>",
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+
+    if args.populate_ata_oque:
+        summary = _run_populate_ata_oque(
+            limit=args.populate_ata_oque_limit,
+            reset_ata_grafo=args.populate_ata_oque_reset_grafo,
+        )
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
+        return
 
     if args.import_texts and args.background:
         pid = _spawn_background_import(args.background_log, args.progress_batch_size)
