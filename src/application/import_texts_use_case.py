@@ -8,6 +8,7 @@ from typing import Callable, TypeVar
 import psycopg
 
 from config.settings import settings
+from src.application.ata_oque_use_case import AtaOqueUseCase
 from src.domain.discurso_context import DiscursoContext
 from src.domain.models import Entity, KnowledgeGraphExtraction
 from src.application.pipeline_use_case import PipelineUseCase
@@ -102,11 +103,13 @@ class ImportTextsUseCase:
         self,
         pipeline: PipelineUseCase | None = None,
         conn: psycopg.Connection | None = None,
+        ata_oque: AtaOqueUseCase | None = None,
     ) -> None:
         self._managed_pipeline = pipeline is None
+        self._conn = conn or get_postgres_connection(dbname="banco", schema="doutorado")
         self._pipeline = pipeline or PipelineUseCase(conn=get_postgres_connection(dbname="banco"))
         self._pipeline.bootstrap()
-        self._conn = conn or get_postgres_connection(dbname="banco", schema="doutorado")
+        self._ata_oque = ata_oque or AtaOqueUseCase(conn=self._conn)
 
     def process_all(
         self,
@@ -270,23 +273,14 @@ class ImportTextsUseCase:
             cursor.execute(update_sql, (trecho_id,))
 
     def fetch_datamart_oque_themes(self, discurso_id: int) -> list[str]:
-        query = (
-            "SELECT tema "
-            "FROM doutorado.datamart_oque "
-            "WHERE discurso_id = %s AND coalesce(trim(tema), '') <> ''"
-        )
-        with self._conn.cursor() as cursor:
-            cursor.execute(query, (discurso_id,))
-            rows = cursor.fetchall()
+        themes = self._ata_oque.load_existing_themes(discurso_id)
+        if themes:
+            return themes
 
-        themes_by_name: dict[str, None] = {}
-        for (raw_theme,) in rows:
-            normalized = str(raw_theme).strip().upper()
-            if not normalized:
-                continue
-            themes_by_name[normalized] = None
+        if self._ata_oque.is_ata_discurso(discurso_id):
+            return self._ata_oque.ensure_themes_for_discurso(discurso_id)
 
-        return list(themes_by_name.keys())
+        return []
 
     def _run_with_retry(
         self,
@@ -359,6 +353,7 @@ class ImportTextsUseCase:
     def _reconnect_databases(self) -> None:
         old_conn = self._conn
         self._conn = get_postgres_connection(dbname="banco", schema="doutorado")
+        self._ata_oque = AtaOqueUseCase(conn=self._conn)
         try:
             old_conn.close()
         except Exception:
