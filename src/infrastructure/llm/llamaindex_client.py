@@ -293,30 +293,6 @@ def _fallback_theme_terms_from_text(text: str, stopwords: set[str], limit: int =
     return [feature_names[term_idx] for term_idx, _ in term_scores[:limit]]
 
 
-def _build_fixed_relationships(entities: list[Entity], themes: list[Entity]) -> list[Relationship]:
-    relationships: list[Relationship] = []
-    seen: set[tuple[str, str]] = set()
-
-    for entity in entities:
-        for theme in themes:
-            if entity.name == theme.name:
-                continue
-            key = (entity.name, theme.name)
-            if key in seen:
-                continue
-            seen.add(key)
-            relationships.append(
-                Relationship(
-                    source=entity.name,
-                    target=theme.name,
-                    relation="RELACIONA",
-                    properties={},
-                )
-            )
-
-    return relationships
-
-
 def _build_discurso_hub_node(discurso_context: DiscursoContext) -> Entity:
     return Entity(
         name=discurso_context.hub_name,
@@ -1052,7 +1028,7 @@ class LlamaIndexKnowledgeExtractor(KnowledgeExtractor):
         if not nodes:
             _set_last_extraction_debug(
                 {
-                    "pipeline": "gliner_entities_bertopic_themes_fixed_relationships",
+                    "pipeline": "gliner_entities_bertopic_themes_discurso_hub",
                     "attempts": attempts,
                     "timings": {
                         "themes_seconds": themes_seconds,
@@ -1073,12 +1049,11 @@ class LlamaIndexKnowledgeExtractor(KnowledgeExtractor):
                 f"hub={hub_node.name} nodes={len(nodes) - 1} "
                 f"data_ocorrencia={discurso_context.data_ocorrencia}"
             )
-            pipeline_name = "gliner_entities_bertopic_themes_discurso_hub"
         else:
-            relationships = _build_fixed_relationships(entities=entities, themes=themes)
-            relationship_attempt = "relationships_cartesian_entities_themes"
-            relationship_preview = f"entities={len(entities)} themes={len(themes)}"
-            pipeline_name = "gliner_entities_bertopic_themes_fixed_relationships"
+            relationships = []
+            relationship_attempt = "relationships_none"
+            relationship_preview = "no discurso_context provided"
+        pipeline_name = "gliner_entities_bertopic_themes_discurso_hub"
         relationships_seconds = round(time.perf_counter() - relationships_started_at, 4)
         attempts.append(
             {

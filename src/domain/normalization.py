@@ -27,5 +27,5 @@ def normalize_graph_category(value: str) -> str:
 def normalize_relation_label(value: str) -> str:
     normalized_name = normalize_graph_name(value)
     if not normalized_name:
-        return "RELACIONA"
+        return "OCORRE_EM"
     return normalized_name.replace(" ", "_")

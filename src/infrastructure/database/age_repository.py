@@ -18,7 +18,7 @@ from src.infrastructure.database.connection import init_apache_age
 
 def _safe_relation_label(value: str) -> str:
     normalized = re.sub(r"\W", "_", normalize_relation_label(value))
-    return normalized or "RELACIONA"
+    return normalized or "OCORRE_EM"
 
 
 def _to_agtype_params(params: dict) -> str:
